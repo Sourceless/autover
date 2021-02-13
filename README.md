@@ -16,6 +16,11 @@ commit messages, notes are not an intrinsic part of the commit; they are purely
 supplemental - meaning if you every switch away from `avtover`, there won't be
 a trail of shame throughout your commit history.
 
+## Assumptions
+`avtover` is designed to work with the following assumptions in mind:
+* You want to increment your revision count when a branch is merged
+* You create a merge commit when you merge a branch (e.g. merging a PR)
+
 ## Usage
 ### Getting the current version
 
@@ -23,6 +28,18 @@ Calling avtover with no args will return the current version
 ``` sh
 $ avtover
 v1.2.3-alpha
+```
+
+### Manually setting the version
+If you're using `avtover` for the first time, and it's taking over versioning
+responsibilities from your team's humans, you probably already have a version
+number.
+
+You can use `avtover set` to tell avtover to just start counting from that
+version.
+
+``` sh
+$ avtover set v1.2.3-alpha
 ```
 
 ### Help
@@ -33,20 +50,32 @@ $ avtover --help
 ```
 
 ### Updating the version
+#### Increment minor version
 ``` sh
 $ avtover minor
 v1.3.0-alpha
 ```
 
+#### Increment major version
 ``` sh
 $ avtover major
 v2.0.0-alpha
 ```
 
+#### Change the tag
 ``` sh
 $ avtover tag rc1
 v2.0.0-rc1
 ```
+
+#### Clear the tag
+
+``` sh
+$ avtover tag -r
+v2.0.0
+```
+
+`
 
 ### Strict updates
 `avtover` forces idempotence by default - that is, if on the same commit you
