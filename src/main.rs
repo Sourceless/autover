@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use git2::{Repository, Commit, Oid, Note};
-use semver::{Version, Identifier};
+use git2::Repository;
+use lazy_static::lazy_static;
+use regex::Regex;
+use semver::{Identifier, Version};
 
 enum VersionCmd {
     IncMajor,
     IncMinor,
     IncPatch,
     SetVersion(String),
-    SetPrereleaseLabel(String)
+    SetPrereleaseLabel(String),
+    ClearPrereleaseLabel,
 }
 
 fn main() {
@@ -18,36 +20,64 @@ fn main() {
 
     let head = repo.head().unwrap();
     let name = head.name().unwrap();
-    let head_tree_id = head.peel_to_tree().unwrap().id();
-
     let notes_ref = repo.note_default_ref().unwrap();
-    let notes = repo.notes(Some(&notes_ref));
-    let mut commit_to_node_map = HashMap::<Oid, Note>::new();
-
-    for note in notes.unwrap() {
-        let (note_id, commit_id) = note.unwrap();
-        let note_obj = repo.find_note(Some(&notes_ref), commit_id).unwrap();
-        commit_to_node_map.insert(commit_id, note_obj);
-    }
 
     let mut cmd_stack = Vec::<VersionCmd>::new();
-    let mut top_commit = Some(head.peel_to_commit().expect(&format!("Couldn't find a commit on ref {}", name)[..]));
+    let mut top_commit = Some(
+        head.peel_to_commit()
+            .expect(&format!("Couldn't find a commit on ref {}", name)[..]),
+    );
 
-    while let Some(commit) = top_commit.clone() {
-        if commit.parents().count() > 1 {
+    // Traverse over every commit and note any place where we need to revise the version
+    while let Some(commit) = top_commit {
+        let num_parents = commit.parents().count();
+
+        if num_parents > 1 {
             // This is merge commit, so increment revision
             cmd_stack.push(VersionCmd::IncPatch);
         } else {
             if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
-                println!("{:?}", note);
+                if let Some(message) = note.message() {
+                    if let Some(command) = match_message_to_cmd(&message) {
+                        cmd_stack.push(command);
+                    }
+                }
             }
         }
 
-        top_commit = get_ancestor(commit, &head_tree_id).clone();
+        top_commit = commit.parents().next();
     }
 
+    // Run the calculation using the cmd stack we have built
     let version = calculate_version(&mut cmd_stack);
     println!("{}", version);
+}
+
+lazy_static! {
+    static ref SET_VERSION_MATCHER: Regex = Regex::new(
+        r"avtover-set-version ([0-9]+\.[0-9]+\.[0-9]+(?:-(?:[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?)"
+    )
+    .unwrap();
+    static ref SET_PRERELEASE_LABEL_MATCHER: Regex =
+        Regex::new(r"avtover-set-prerelease-label ([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)").unwrap();
+}
+
+fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
+    if message.contains("avtover-inc-major") {
+        return Some(VersionCmd::IncMajor);
+    } else if message.contains("avtover-inc-minor") {
+        return Some(VersionCmd::IncMinor);
+    } else if let Some(version_str) = SET_VERSION_MATCHER.find(message) {
+        return Some(VersionCmd::SetVersion(String::from(version_str.as_str())));
+    } else if let Some(prerelease_label) = SET_PRERELEASE_LABEL_MATCHER.find(message) {
+        return Some(VersionCmd::SetPrereleaseLabel(String::from(
+            prerelease_label.as_str(),
+        )));
+    } else if message.contains("avtover-clear-prerelease-label") {
+        return Some(VersionCmd::ClearPrereleaseLabel);
+    }
+
+    None
 }
 
 fn calculate_version(cmd_stack: &mut Vec<VersionCmd>) -> Version {
@@ -57,22 +87,15 @@ fn calculate_version(cmd_stack: &mut Vec<VersionCmd>) -> Version {
             VersionCmd::IncMajor => version.increment_major(),
             VersionCmd::IncMinor => version.increment_minor(),
             VersionCmd::IncPatch => version.increment_patch(),
-            VersionCmd::SetPrereleaseLabel(label) => version.pre = Vec::from([Identifier::AlphaNumeric(label)]),
-            VersionCmd::SetVersion(version_str) => version = Version::parse(&version_str.as_str()).expect("Could not parse version")
+            VersionCmd::SetPrereleaseLabel(label) => {
+                version.pre = Vec::from([Identifier::AlphaNumeric(label)])
+            }
+            VersionCmd::SetVersion(version_str) => {
+                version = Version::parse(&version_str.as_str()).expect("Could not parse version")
+            }
+            VersionCmd::ClearPrereleaseLabel => version.pre = Vec::<Identifier>::new(),
         }
     }
 
-   version
-}
-
-fn get_ancestor<'a>(commit: Commit<'a>, tree_id: &Oid) -> Option<Commit<'a>> {
-    let parents = commit.parents();
-
-    for parent in parents {
-        if parent.tree_id() == *tree_id {
-            return Some(parent.clone());
-        }
-    }
-
-    return None;
+    version
 }
