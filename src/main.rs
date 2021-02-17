@@ -2,6 +2,7 @@ use git2::Repository;
 use lazy_static::lazy_static;
 use regex::Regex;
 use semver::{Identifier, Version};
+use clap::{Arg, App};
 
 enum VersionCmd {
     IncMajor,
@@ -13,6 +14,31 @@ enum VersionCmd {
 }
 
 fn main() {
+    let matches = App::new("avtover")
+        .version("0")
+        .author("Laurence Pakenham-Smith <laurence@sourceless.org")
+        .about("Automatic calculatable versions")
+        .arg(Arg::with_name("count-patch")
+             .short("c")
+             .long("count-patch")
+             .value_name("COUNT_METHOD")
+             .help("Choose the counting method from merge (default), commit, or manual.")
+             .takes_value(true))
+        .subcommand(App::new("major")
+                    .about("Increments the major version"))
+        .subcommand(App::new("minor")
+                    .about("Increments the minor version"))
+        .subcommand(App::new("patch")
+                    .about("Increments the patch version (manual COUNT_METHOD only)"))
+        .subcommand(App::new("tag")
+                    .about("Set or clear the prerelease tag")
+                    .arg(Arg::with_name("NAME")
+                    .index(1)));
+
+    get_version();
+}
+
+fn get_version() {
     let repo = match Repository::discover(".") {
         Ok(repo) => repo,
         Err(e) => panic!("Failed to open git repository: {}", e),
