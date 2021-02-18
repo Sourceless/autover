@@ -14,7 +14,7 @@ enum VersionCmd {
 }
 
 fn main() {
-    let matches = App::new("avtover")
+    let matches = App::new("autover")
         .version("0")
         .author("Laurence Pakenham-Smith <laurence@sourceless.org")
         .about("Automatic calculatable versions")
@@ -81,17 +81,17 @@ fn get_version() {
 
 lazy_static! {
     static ref SET_VERSION_MATCHER: Regex = Regex::new(
-        r"avtover-set-version ([0-9]+\.[0-9]+\.[0-9]+(?:-(?:[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?)"
+        r"autover-set-version ([0-9]+\.[0-9]+\.[0-9]+(?:-(?:[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?)"
     )
     .unwrap();
     static ref SET_PRERELEASE_LABEL_MATCHER: Regex =
-        Regex::new(r"avtover-set-prerelease-label ([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)").unwrap();
+        Regex::new(r"autover-set-prerelease-label ([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)").unwrap();
 }
 
 fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
-    if message.contains("avtover-inc-major") {
+    if message.contains("autover-inc-major") {
         return Some(VersionCmd::IncMajor);
-    } else if message.contains("avtover-inc-minor") {
+    } else if message.contains("autover-inc-minor") {
         return Some(VersionCmd::IncMinor);
     } else if let Some(version_str) = SET_VERSION_MATCHER.find(message) {
         return Some(VersionCmd::SetVersion(String::from(version_str.as_str())));
@@ -99,7 +99,7 @@ fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
         return Some(VersionCmd::SetPrereleaseLabel(String::from(
             prerelease_label.as_str(),
         )));
-    } else if message.contains("avtover-clear-prerelease-label") {
+    } else if message.contains("autover-clear-prerelease-label") {
         return Some(VersionCmd::ClearPrereleaseLabel);
     }
 
