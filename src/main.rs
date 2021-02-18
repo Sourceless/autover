@@ -4,6 +4,7 @@ use regex::Regex;
 use semver::{Identifier, Version};
 use clap::{Arg, App, ArgMatches};
 use std::process;
+use std::io::{self, Write};
 
 enum VersionCmd {
     IncMajor,
@@ -23,8 +24,7 @@ enum CountMethod {
 
 fn main() {
     let matches = App::new("autover")
-        .version("0")
-        .author("Laurence Pakenham-Smith <laurence@sourceless.org")
+        .author("Laurence Pakenham-Smith <laurence@sourceless.org>")
         .about("Automatic calculatable versions")
         .arg(Arg::with_name("count-patch")
              .short("c")
@@ -45,6 +45,21 @@ fn main() {
                          .index(1)))
         .subcommand(App::new("clear")
                     .about("Clear the current commit of any manual version changes"))
+        .subcommand(App::new("push")
+                    .about("Push version changes to the remote repository")
+                    .arg(Arg::with_name("REMOTE")
+                         .help("Optional remote name (defaults to 'origin')")
+                         .index(1)))
+        .subcommand(App::new("fetch")
+                    .about("Fetch version changes from the remote repository")
+                    .arg(Arg::with_name("REMOTE")
+                         .help("Optional remote name (defaults to 'origin')")
+                         .index(1)))
+        .subcommand(App::new("init")
+                    .about("Set up repository to auto-push version changes")
+                    .arg(Arg::with_name("REMOTE")
+                         .help("Optional remote name (defaults to 'origin')")
+                         .index(1)))
         .get_matches();
 
     match app(matches) {
@@ -99,6 +114,27 @@ fn app(matches: ArgMatches) -> Result<(), i32> {
         clear_note();
         let new_version = get_version(&repo, &count_method);
         println!("{} -> {}", start_version, new_version);
+    } else if let Some(matches) = matches.subcommand_matches("push") {
+        let mut remote = "origin";
+        if let Some(remote_arg) = matches.value_of("REMOTE") {
+            remote = remote_arg
+        }
+        push(&remote);
+        println!("Remote {} is now at {}", &remote, start_version);
+    } else if let Some(matches) = matches.subcommand_matches("fetch") {
+        let mut remote = "origin";
+        if let Some(remote_arg) = matches.value_of("REMOTE") {
+            remote = remote_arg
+        }
+        fetch(&remote);
+        let new_version = get_version(&repo, &count_method);
+        println!("Local repo is now at {} (from {})", new_version, &remote);
+    } else if let Some(matches) = matches.subcommand_matches("init") {
+        let mut remote = "origin";
+        if let Some(remote_arg) = matches.value_of("REMOTE") {
+            remote = remote_arg
+        }
+        init(&repo, &remote);
     } else {
         println!("{}", start_version);
     }
@@ -122,6 +158,33 @@ fn clear_note() {
         .args(&["notes", "remove"])
         .output()
         .expect("git failed to execute");
+}
+
+fn push(remote: &str) {
+    let output = process::Command::new("git")
+        .args(&["push", &remote, "refs/notes/*"])
+        .output()
+        .expect("git failed to execute");
+
+    println!("Pushing version to {}", remote);
+    io::stdout().write_all(&output.stdout).unwrap();
+    io::stderr().write_all(&output.stderr).unwrap();
+}
+
+fn fetch(remote: &str) {
+    let output = process::Command::new("git")
+        .args(&["fetch", &remote, "refs/notes/*:refs/notes/*"])
+        .output()
+        .expect("git failed to execute");
+
+    println!("Fetching version information from {}", remote);
+    io::stdout().write_all(&output.stdout).unwrap();
+    io::stderr().write_all(&output.stderr).unwrap();
+}
+
+fn init(repo: &Repository, remote: &str) {
+    repo.remote_add_fetch(&remote, &"refs/notes/*:refs/notes/*").expect("argh");
+    repo.remote_add_push(&remote, &"refs/notes/*").expect("argh");
 }
 
 fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
