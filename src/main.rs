@@ -2,7 +2,8 @@ use git2::Repository;
 use lazy_static::lazy_static;
 use regex::Regex;
 use semver::{Identifier, Version};
-use clap::{Arg, App};
+use clap::{Arg, App, ArgMatches};
+use std::process;
 
 enum VersionCmd {
     IncMajor,
@@ -11,6 +12,13 @@ enum VersionCmd {
     SetVersion(String),
     SetPrereleaseLabel(String),
     ClearPrereleaseLabel,
+}
+
+#[derive(PartialEq)]
+enum CountMethod {
+    Merge,
+    Commit,
+    Manual
 }
 
 fn main() {
@@ -33,17 +41,90 @@ fn main() {
         .subcommand(App::new("tag")
                     .about("Set or clear the prerelease tag")
                     .arg(Arg::with_name("NAME")
-                    .index(1)));
+                         .help("Optional tag name. Leave blank to clear.")
+                         .index(1)))
+        .subcommand(App::new("clear")
+                    .about("Clear the current commit of any manual version changes"))
+        .get_matches();
 
-    get_version();
+    match app(matches) {
+        Ok(_) => (),
+        Err(code) => process::exit(code)
+    }
 }
 
-fn get_version() {
-    let repo = match Repository::discover(".") {
-        Ok(repo) => repo,
-        Err(e) => panic!("Failed to open git repository: {}", e),
+fn app(matches: ArgMatches) -> Result<(), i32> {
+    let count_method = match matches.value_of("count-patch") {
+        Some("merge") => CountMethod::Merge,
+        Some("commit") => CountMethod::Commit,
+        Some("manual") => CountMethod::Manual,
+        Some(m) => {
+            eprintln!("{} is not a valid COUNT_METHOD (merge, commit, manual)", m);
+            return Err(1);
+        },
+        None => CountMethod::Merge
     };
 
+    let repo = match Repository::discover(".") {
+        Ok(repo) => repo,
+        Err(e) => {
+            eprintln!("Failed to open git repository: {}", e);
+            return Err(1);
+        },
+    };
+
+    let start_version = get_version(&repo, &count_method);
+
+    if matches.subcommand_matches("major").is_some() {
+        set_note(&"autover-inc-major");
+        let new_version = get_version(&repo, &count_method);
+        println!("{} -> {}", start_version, new_version);
+    } else if matches.subcommand_matches("minor").is_some() {
+        set_note(&"autover-inc-minor");
+        let new_version = get_version(&repo, &count_method);
+        println!("{} -> {}", start_version, new_version);
+    } else if matches.subcommand_matches("patch").is_some() {
+        set_note(&"autover-inc-patch");
+        let new_version = get_version(&repo, &count_method);
+        println!("{} -> {}", start_version, new_version);
+    } else if let Some(matches) = matches.subcommand_matches("tag") {
+        if let Some(name) = matches.value_of("NAME") {
+            set_note(&format!("{} {}", "autover-set-prerelease-label", name));
+        } else {
+            set_note(&"autover-clear-prerelease-label");
+        }
+        let new_version = get_version(&repo, &count_method);
+        println!("{} -> {}", start_version, new_version);
+    } else if matches.subcommand_matches("clear").is_some() {
+        clear_note();
+        let new_version = get_version(&repo, &count_method);
+        println!("{} -> {}", start_version, new_version);
+    } else {
+        println!("{}", start_version);
+    }
+
+    Ok(())
+}
+
+fn set_note(message: &str) {
+    // TODO: use git2 instead of calling out here
+    // TODO: maybe don't destroy existing notes?
+    process::Command::new("git")
+        .args(&["notes", "add", "-f", "-m", &message])
+        .output()
+        .expect("git failed to execute");
+}
+
+fn clear_note() {
+    // TODO: use git2 instead of calling out here
+    // TODO: maybe don't destroy existing notes?
+    process::Command::new("git")
+        .args(&["notes", "remove"])
+        .output()
+        .expect("git failed to execute");
+}
+
+fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
     let head = repo.head().unwrap();
     let name = head.name().unwrap();
     let notes_ref = repo.note_default_ref().unwrap();
@@ -58,13 +139,16 @@ fn get_version() {
     while let Some(commit) = top_commit {
         let num_parents = commit.parents().count();
 
-        if num_parents > 1 {
-            // This is merge commit, so increment revision
+        if *count_method == CountMethod::Commit && num_parents == 1 {
+            cmd_stack.push(VersionCmd::IncPatch);
+        }
+
+        if *count_method == CountMethod::Merge && num_parents > 1 {
             cmd_stack.push(VersionCmd::IncPatch);
         } else {
             if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
                 if let Some(message) = note.message() {
-                    if let Some(command) = match_message_to_cmd(&message) {
+                    if let Some(command) = match_message_to_cmd(&count_method, &message) {
                         cmd_stack.push(command);
                     }
                 }
@@ -74,9 +158,7 @@ fn get_version() {
         top_commit = commit.parents().next();
     }
 
-    // Run the calculation using the cmd stack we have built
-    let version = calculate_version(&mut cmd_stack);
-    println!("{}", version);
+    calculate_version(&mut cmd_stack)
 }
 
 lazy_static! {
@@ -88,19 +170,22 @@ lazy_static! {
         Regex::new(r"autover-set-prerelease-label ([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)").unwrap();
 }
 
-fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
+fn match_message_to_cmd(count_method: &CountMethod, message: &str) -> Option<VersionCmd> {
     if message.contains("autover-inc-major") {
         return Some(VersionCmd::IncMajor);
     } else if message.contains("autover-inc-minor") {
         return Some(VersionCmd::IncMinor);
     } else if let Some(version_str) = SET_VERSION_MATCHER.find(message) {
         return Some(VersionCmd::SetVersion(String::from(version_str.as_str())));
-    } else if let Some(prerelease_label) = SET_PRERELEASE_LABEL_MATCHER.find(message) {
+    } else if let Some(captures) = SET_PRERELEASE_LABEL_MATCHER.captures(message) {
+            let prerelease_label = &captures[1];
         return Some(VersionCmd::SetPrereleaseLabel(String::from(
-            prerelease_label.as_str(),
+            prerelease_label,
         )));
     } else if message.contains("autover-clear-prerelease-label") {
         return Some(VersionCmd::ClearPrereleaseLabel);
+    } else if message.contains("autover-inc-patch") && *count_method == CountMethod::Manual {
+        return Some(VersionCmd::IncPatch)
     }
 
     None
