@@ -88,8 +88,8 @@ fn app(matches: ArgMatches) -> Result<(), i32> {
 
     let repo = match Repository::discover(".") {
         Ok(repo) => repo,
-        Err(e) => {
-            eprintln!("Failed to open git repository: {}", e);
+        Err(_) => {
+            eprintln!("Could not find a git repository in the current directory");
             return Err(1);
         },
     };
@@ -204,7 +204,13 @@ fn init(repo: &Repository, remote: &str) {
 }
 
 fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
-    let head = repo.head().unwrap();
+    let head = match repo.head() {
+        Ok(head) => head,
+        Err(_) => {
+            eprintln!("HEAD has no commits - make sure there is at least 1 commit");
+            process::exit(1);
+        }
+    };
     let name = head.name().unwrap();
     let notes_ref = repo.note_default_ref().unwrap();
 
