@@ -40,3 +40,9 @@ jobs:
       run: cargo build --verbose --release
     - name: Run tests
       run: cargo test --verbose
+    - name: Create release in github
+      run: echo "Release"
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    - name: Publish to crates.io
+      run: echo "Upload"
+      if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
