@@ -17,13 +17,15 @@ jobs:
     - uses: actions/checkout@v2
       with:
         fetch-depth: 0
+    - name: Cargo.lock -- copy -> Cargo.lock.orig
+      run: cp Cargo.lock Cargo.lock.orig
     - uses: actions/cache@v2
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
           target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock.orig') }}
     - name: Get deps
       run: cargo fetch
     - name: Initial build
@@ -60,7 +62,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./targets/release/autover
+        asset_path: ./target/release/autover
         asset_name: autover-${{ env.VERSION }}
         asset_content_type: application/octet-stream
     - name: Publish to crates.io
