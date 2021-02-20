@@ -20,8 +20,10 @@ jobs:
       run: cargo deps --verbose
     - name: Set VERSION
       run: echo "VERSION=$(cargo run)" >> $GITHUB_ENV
-    - name: Override version in Cargo.toml
-      run: sed -i Cargo.toml -e "s/0\.0\.0-replaceme/$VERSION/"
+    - name: Override version in Cargo files
+      run: |
+        sed -i Cargo.toml -e "s/0\.0\.0-replaceme/$VERSION/"
+        sed -i Cargo.lock -e "s/0\.0\.0-replaceme/$VERSION/"
     - name: Build
       run: cargo build --verbose
     - name: Run tests
