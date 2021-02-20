@@ -1,25 +1,17 @@
 # autover
 
-Automatic versioning software
+Automatic semantic versioning for your git project.
+
+## Installation
+1. Download one of the latest releases, or compile it yourself using `cargo build`.
+2. Run `autover init` in the repo that you want to start versioning in.
+3. (Optionally) set your app version with `autover set <version>`
+4. Push to remote!
 
 ## How does it work?
+`autover` is an app that **calculates** the version of your project using its git history, specifically by putting some data in the project's `git notes`.
 
-`autover` is an app that **calculates** the version of your project using its git
-history.
-
-There are a two simple rules:
-* The version starts at 0.0.0
-* Every merge commit increments the revision number (e.g. 0.0.0 -> 0.0.1)
-
-All other tracking is done using git notes, a lesser known feature of git. Unlike
-commit messages, notes are not an intrinsic part of the commit; they are purely
-supplemental - meaning if you every switch away from `autover`, there won't be
-a trail of shame throughout your commit history.
-
-## Assumptions
-`autover` is designed to work with the following assumptions in mind:
-* You want to increment your revision count when a branch is merged
-* You create a merge commit when you merge a branch (e.g. merging a PR)
+Since it uses git notes, you do need to push the notes refs. `autover init` sets your git config such that it will push 
 
 ## Usage
 ### Getting the current version
@@ -45,41 +37,99 @@ $ autover set v1.2.3-alpha
 ### Help
 
 ``` sh
-$ autover --help
-...help text goes here...
+$ autover help
+autover 
+Laurence Pakenham-Smith <laurence@sourceless.org>
+Automatic calculatable versions
+
+USAGE:
+    autover [OPTIONS] [SUBCOMMAND]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -c, --count-patch <COUNT_METHOD>    Choose the counting method from merge (default), commit, or manual.
+
+SUBCOMMANDS:
+    clear    Clear the current commit of any manual version changes
+    fetch    Fetch version changes from the remote repository
+    help     Prints this message or the help of the given subcommand(s)
+    init     Set up repository to auto-push version changes
+    major    Increments the major version
+    minor    Increments the minor version
+    patch    Increments the patch version (manual COUNT_METHOD only)
+    push     Push version changes to the remote repository
+    set      Override the current version
+    tag      Set or clear the prerelease tag
 ```
 
 ### Updating the version
+#### Increment patch version
+There's a few different ways to do this, two automatic and one manual.
+##### Increment patch on merge commit (default)
+By default, `autover` will increment the patch number when it sees a merge commit.
+
+##### Increment patch on non-merge commits
+Invoking `autover -c commit` will tell `autover` to count regular commits as patch increments.
+
+##### Increment patches manually
+
+``` sh
+$ autover patch
+1.2.3-alpha -> 1.2.4-alpha
+```
+
 #### Increment minor version
 ``` sh
 $ autover minor
-v1.3.0-alpha
+1.2.4-alpha -> 1.3.0-alpha
 ```
 
 #### Increment major version
 ``` sh
 $ autover major
-v2.0.0-alpha
+1.3.0-alpha -> 2.0.0-alpha
 ```
 
 #### Change the tag
 ``` sh
 $ autover tag rc1
-v2.0.0-rc1
+2.0.0-alpha -> 2.0.0-rc1
 ```
 
 #### Clear the tag
-
 ``` sh
-$ autover tag -r
-v2.0.0
+$ autover tag
+2.0.0-rc1 -> 2.0.0
 ```
 
-`
+#### Undoing changes to the current commit
 
-### Strict updates
-`autover` forces idempotence by default - that is, if on the same commit you
-`autover major` twice in a row, the result will be the same as if it were only
-applied once.
+``` sh
+$ autover clear
+```
 
-You can override this behaviour with the `-f` flag.
+### Other commands
+#### Ensuring notes get fetched and pushed automatically
+
+``` sh
+$ autover init
+```
+
+This command adds a couple of lines to `.git/config` which ensure that any `git notes` added by `autover` are pushed and fetched with your normal workflow. If you're having any problems with versions not updating on remote or not pulling them down, this is probably the issue.
+
+#### Manually pushing/fetching version/notes
+`autover` offers the `fetch` and `push` commands, if you need to fetch or push note refs manually, for instance during a ci run.
+
+### Caveats
+Currently autover only supports *one* command per note (and thus per commit)
+
+It also depends on a full git history being available, currently, so if you are using `autover` in ci and fetching with depth 0, then it will not function as expected.
+
+## Rationale
+### Why use `git notes`?
+The original mvp of this app used markers in commits, but there were a few things that I didn't like about that approach:
+* It leaves a lot of rubbish in commits
+* It encourages people to make empty commits that do nothing but increment the version.
