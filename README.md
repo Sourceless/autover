@@ -14,6 +14,11 @@ Automatic semantic versioning for your git project.
 Since it uses git notes, you do need to push the notes refs. `autover init` sets your git config such that it will push 
 
 ## Usage
+### Restrictions
+You can only make one change to the version per commit. To, for example, update the major version AND the release tag, you must use two seperate commits.
+
+This may be changed in future, but has been omitted from this version for simplicity.
+
 ### Getting the current version
 
 Calling autover with no args will return the current version
