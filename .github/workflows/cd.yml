@@ -68,4 +68,3 @@ jobs:
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
       with:
           registry-token: ${{ secrets.CRATES_API_TOKEN }}
-          dry-run: true
