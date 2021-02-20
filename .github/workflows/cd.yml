@@ -18,7 +18,7 @@ jobs:
       with:
         fetch-depth: 0
     - name: Get deps
-      run: cargo deps --verbose
+      run: cargo fetch
     - name: Set VERSION
       run: echo "VERSION=$(cargo run)" >> $GITHUB_ENV
     - name: Override version in Cargo files
