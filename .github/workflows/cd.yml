@@ -1,0 +1,28 @@
+name: continuous-deployment
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      fetch-depth: 0
+    - name: Get deps
+      run: cargo deps --verbose
+    - name: Set VERSION
+      run: echo "VERSION=$(cargo run)" >> $GITHUB_ENV
+    - name: Override version in Cargo.toml
+      run: sed -i Cargo.toml -e "s/0\.0\.0-replaceme/$VERSION/"
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
