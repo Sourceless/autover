@@ -1,6 +1,6 @@
 [package]
 name = "autover"
-version = "0.1.0"
+version = "0.0.0-replaceme"
 authors = ["Laurence Pakenham-Smith <laurence@sourceless.org>"]
 edition = "2018"
 description = "Automatic versioning with git notes"
