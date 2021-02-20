@@ -19,7 +19,7 @@ Since it uses git notes, you do need to push the notes refs. `autover init` sets
 Calling autover with no args will return the current version
 ``` sh
 $ autover
-v1.2.3-alpha
+1.2.3-alpha
 ```
 
 ### Manually setting the version
@@ -31,7 +31,7 @@ You can use `autover set` to tell autover to just start counting from that
 version.
 
 ``` sh
-$ autover set v1.2.3-alpha
+$ autover set 1.2.3-alpha
 ```
 
 ### Help
