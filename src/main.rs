@@ -38,6 +38,12 @@ fn main() {
                     .about("Increments the minor version"))
         .subcommand(App::new("patch")
                     .about("Increments the patch version (manual COUNT_METHOD only)"))
+        .subcommand(App::new("set")
+                    .about("Override the current version")
+                    .arg(Arg::with_name("SEMVER")
+                         .required(true)
+                         .help("Version to change to")
+                         .index(1)))
         .subcommand(App::new("tag")
                     .about("Set or clear the prerelease tag")
                     .arg(Arg::with_name("NAME")
@@ -135,6 +141,16 @@ fn app(matches: ArgMatches) -> Result<(), i32> {
             remote = remote_arg
         }
         init(&repo, &remote);
+    } else if let Some(matches) = matches.subcommand_matches("set") {
+        let version_str = matches.value_of("SEMVER").expect("SEMVER value required");
+        if let Ok(_) = Version::parse(version_str) {
+            set_note(&format!("autover-set-version {}", version_str).as_str());
+            let new_version = get_version(&repo, &count_method);
+            println!("{} -> {}", start_version, new_version);
+        } else {
+            eprintln!("{} is not a valid semver string", version_str);
+            return Err(1);
+        }
     } else {
         println!("{}", start_version);
     }
@@ -238,8 +254,8 @@ fn match_message_to_cmd(count_method: &CountMethod, message: &str) -> Option<Ver
         return Some(VersionCmd::IncMajor);
     } else if message.contains("autover-inc-minor") {
         return Some(VersionCmd::IncMinor);
-    } else if let Some(version_str) = SET_VERSION_MATCHER.find(message) {
-        return Some(VersionCmd::SetVersion(String::from(version_str.as_str())));
+    } else if let Some(captures) = SET_VERSION_MATCHER.captures(message) {
+        return Some(VersionCmd::SetVersion(String::from(&captures[1])));
     } else if let Some(captures) = SET_PRERELEASE_LABEL_MATCHER.captures(message) {
             let prerelease_label = &captures[1];
         return Some(VersionCmd::SetPrereleaseLabel(String::from(
