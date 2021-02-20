@@ -41,7 +41,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Create Release
-      id: create-release
+      id: create_release
       uses: actions/create-release@v1
       if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
       env:
