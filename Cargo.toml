@@ -3,8 +3,15 @@ name = "autover"
 version = "0.1.0"
 authors = ["Laurence Pakenham-Smith <laurence@sourceless.org>"]
 edition = "2018"
+description = "Automatic versioning with git notes"
+license = "MIT"
+homepage = "https://github.com/Sourceless/autover"
+documentation = "https://github.com/Sourceless/autover#readme"
+repository = "https://github.com/Sourceless/autover"
+readme = "README.md"
+keywords = ["versioning", "git"]
+categories = ["command-line-utilities", "development-tools"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 git2 = "0.13"
