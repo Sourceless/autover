@@ -265,14 +265,12 @@ fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
         }
 
         if *count_method == CountMethod::Commit && num_parents == 1 {
-            println!("Inc patch");
             cmd_stack.push(VersionCmd::IncPatch);
             patch_flag = true;
             continue;
         }
 
         if *count_method == CountMethod::Merge && num_parents > 1 {
-            println!("Inc patch");
             cmd_stack.push(VersionCmd::IncPatch);
             patch_flag = true;
             continue;
