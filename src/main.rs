@@ -6,6 +6,7 @@ use clap::{Arg, App, ArgMatches};
 use std::process;
 use std::io::{self, Write};
 
+#[derive(PartialEq, Debug)]
 enum VersionCmd {
     IncMajor,
     IncMinor,
@@ -31,6 +32,12 @@ fn main() {
              .long("count-patch")
              .value_name("COUNT_METHOD")
              .help("Choose the counting method from merge (default), commit, or manual.")
+             .takes_value(true))
+        .arg(Arg::with_name("path")
+             .short("p")
+             .long("path")
+             .value_name("REPO_PATH")
+             .help("Path to a dir that contains a .git or is a descendant of such a directory.")
              .takes_value(true))
         .subcommand(App::new("major")
                     .about("Increments the major version"))
@@ -75,6 +82,7 @@ fn main() {
 }
 
 fn app(matches: ArgMatches) -> Result<(), i32> {
+    // Select the count method, or default to merge counting
     let count_method = match matches.value_of("count-patch") {
         Some("merge") => CountMethod::Merge,
         Some("commit") => CountMethod::Commit,
@@ -86,10 +94,13 @@ fn app(matches: ArgMatches) -> Result<(), i32> {
         None => CountMethod::Merge
     };
 
-    let repo = match Repository::discover(".") {
+    // If a path is specified, use it, otherwise default to current dir
+    let repo_path = matches.value_of("path").unwrap_or(".");
+
+    let repo = match Repository::discover(repo_path) {
         Ok(repo) => repo,
         Err(_) => {
-            eprintln!("Could not find a git repository in the current directory");
+            eprintln!("Could not find a git repository in {}", repo_path);
             return Err(1);
         },
     };
@@ -204,43 +215,68 @@ fn init(repo: &Repository, remote: &str) {
 }
 
 fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
-    let head = match repo.head() {
+    match repo.head() {
         Ok(head) => head,
         Err(_) => {
             eprintln!("HEAD has no commits - make sure there is at least 1 commit");
             process::exit(1);
         }
     };
-    let name = head.name().unwrap();
-    let notes_ref = repo.note_default_ref().unwrap();
 
+    let notes_ref = repo.note_default_ref().unwrap();
     let mut cmd_stack = Vec::<VersionCmd>::new();
-    let mut top_commit = Some(
-        head.peel_to_commit()
-            .expect(&format!("Couldn't find a commit on ref {}", name)[..]),
-    );
+    let mut revwalk = repo.revwalk().unwrap();
+    revwalk.push_head().unwrap();
+
+    // We need to track if a patch has occurred on the previous commit,
+    // if it has we need to delete it because it will cause an off by one error.
+    let mut patch_flag = false;
 
     // Traverse over every commit and note any place where we need to revise the version
-    while let Some(commit) = top_commit {
+    for commit in revwalk {
+        let commit = commit.unwrap();
+        let commit = repo.find_commit(commit).unwrap();
         let num_parents = commit.parents().count();
 
-        if *count_method == CountMethod::Commit && num_parents == 1 {
-            cmd_stack.push(VersionCmd::IncPatch);
-        }
+        if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
+            if let Some(message) = note.message() {
+                if let Some(command) = match_message_to_cmd(&count_method, &message) {
+                    // TODO: find a better approach than this.
 
-        if *count_method == CountMethod::Merge && num_parents > 1 {
-            cmd_stack.push(VersionCmd::IncPatch);
-        } else {
-            if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
-                if let Some(message) = note.message() {
-                    if let Some(command) = match_message_to_cmd(&count_method, &message) {
-                        cmd_stack.push(command);
+                    // There's a little complexity in here because there
+                    // are some edge cases for merge counting and patches
+                    // that can cause some off by one errors.
+
+                    // If we are incrementing minor or major just before a merge commit,
+                    // then we do not want to apply a patch for that merge commit.
+                    if *count_method == CountMethod::Merge && patch_flag && (command == VersionCmd::IncMinor || command == VersionCmd::IncMajor) {
+                        cmd_stack.pop();
                     }
+
+                    // If the command is a manual patch inc, we should leave the patch_flag
+                    // untouched, otherwise the behaviour is strange with the other patch methods
+                    if *count_method == CountMethod::Merge && command != VersionCmd::IncPatch {
+                        patch_flag = false;
+                    }
+
+                    cmd_stack.push(command);
                 }
             }
         }
 
-        top_commit = commit.parents().next();
+        if *count_method == CountMethod::Commit && num_parents == 1 {
+            println!("Inc patch");
+            cmd_stack.push(VersionCmd::IncPatch);
+            patch_flag = true;
+            continue;
+        }
+
+        if *count_method == CountMethod::Merge && num_parents > 1 {
+            println!("Inc patch");
+            cmd_stack.push(VersionCmd::IncPatch);
+            patch_flag = true;
+            continue;
+        }
     }
 
     calculate_version(&mut cmd_stack)
@@ -294,4 +330,54 @@ fn calculate_version(cmd_stack: &mut Vec<VersionCmd>) -> Version {
     }
 
     version
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semver::Version;
+
+    fn expect_version_for_repo(expected_version: &str, repo_path: &str, count_method: &CountMethod) {
+        let repo = Repository::discover(repo_path).unwrap();
+        assert_eq!(Version::parse(expected_version).unwrap(),
+                   get_version(&repo, &count_method));
+    }
+
+    macro_rules! repo_tests {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let (version, repo, count_method) = $value;
+                expect_version_for_repo(version,
+                                        repo,
+                                        &count_method);
+            }
+        )*
+        }
+    }
+
+    repo_tests! {
+        single_commit_merge: ("0.0.0", "./test/single_commit", CountMethod::Merge),
+        single_commit_commit: ("0.0.0", "./test/single_commit", CountMethod::Commit),
+        single_commit_manual: ("0.0.0", "./test/single_commit", CountMethod::Manual),
+        two_commits_merge: ("0.0.0", "./test/two_commits", CountMethod::Merge),
+        two_commits_commit: ("0.0.1", "./test/two_commits", CountMethod::Commit),
+        two_commits_manual: ("0.0.0", "./test/two_commits", CountMethod::Manual),
+        merge_commit_merge: ("0.0.1", "./test/merge_commit", CountMethod::Merge),
+        merge_commit_commit: ("0.0.1", "./test/merge_commit", CountMethod::Commit),
+        merge_commit_manual: ("0.0.0", "./test/merge_commit", CountMethod::Manual),
+        updated_from_master_merge: ("0.0.2", "./test/updated_from_master", CountMethod::Merge),
+        updated_from_master_commit: ("0.0.3", "./test/updated_from_master", CountMethod::Commit),
+        updated_from_master_manual: ("0.0.0", "./test/updated_from_master", CountMethod::Manual),
+        minor_update_merge: ("0.1.0", "./test/minor_update", CountMethod::Merge),
+        minor_update_commit: ("0.1.0", "./test/minor_update", CountMethod::Commit),
+        minor_update_manual: ("0.1.0", "./test/minor_update", CountMethod::Manual),
+        major_update_merge: ("1.0.0", "./test/major_update", CountMethod::Merge),
+        major_update_commit: ("1.0.0", "./test/major_update", CountMethod::Commit),
+        major_update_manual: ("1.0.0", "./test/major_update", CountMethod::Manual),
+        manual_patch_after_major_update_merge: ("1.0.1", "./test/manual_patch_after_major_update", CountMethod::Merge),
+        manual_patch_after_major_update_commit: ("1.0.1", "./test/manual_patch_after_major_update", CountMethod::Commit),
+        manual_patch_after_major_update_manual: ("1.0.1", "./test/manual_patch_after_major_update", CountMethod::Manual),
+    }
 }
