@@ -1,5 +1,7 @@
 # autover
 
+[![current version on crates.io](https://shields.io/crates/v/autover)](https://crates.io/crates/autover)
+
 Automatic semantic versioning for your git project.
 
 ## Installation
