@@ -239,8 +239,6 @@ fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
         let commit = repo.find_commit(commit).unwrap();
         let num_parents = commit.parents().count();
 
-        println!("{:?}", commit);
-
         if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
             if let Some(message) = note.message() {
                 if let Some(command) = match_message_to_cmd(&message) {
@@ -252,8 +250,6 @@ fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
         } else if num_parents > 1 {
             cmds.push_back(VersionCmd::IncPatchMerge);
         }
-
-        println!("{:?}", cmds);
     }
 
     calculate_version(&mut cmds, &count_method)
@@ -291,7 +287,6 @@ fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
 
 fn calculate_version(cmd_stack: &mut VecDeque<VersionCmd>, count_method: &CountMethod) -> Version {
     let mut version = Version::new(0, 0, 0);
-    println!("{:}", version);
     let mut skip_next_patch_merge = false;
     while let Some(cmd) = cmd_stack.pop_back() {
         print!("\n{:?}", cmd);
