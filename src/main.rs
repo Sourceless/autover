@@ -289,7 +289,6 @@ fn calculate_version(cmd_stack: &mut VecDeque<VersionCmd>, count_method: &CountM
     let mut version = Version::new(0, 0, 0);
     let mut skip_next_patch_merge = false;
     while let Some(cmd) = cmd_stack.pop_back() {
-        print!("\n{:?}", cmd);
         match cmd {
             VersionCmd::IncMajor => {
                 skip_next_patch_merge = true;
@@ -324,7 +323,6 @@ fn calculate_version(cmd_stack: &mut VecDeque<VersionCmd>, count_method: &CountM
             }
             VersionCmd::ClearPrereleaseLabel => version.pre = Vec::<Identifier>::new(),
         }
-        print!(" -> {:}\n", version);
     }
 
     version
