@@ -24,7 +24,6 @@ You can only make one change to the version per commit. To, for example, update 
 This may be changed in future, but has been omitted from this version for simplicity.
 
 ### Getting the current version
-
 Calling autover with no args will return the current version
 ``` sh
 $ autover
