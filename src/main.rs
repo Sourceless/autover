@@ -5,11 +5,15 @@ use semver::{Identifier, Version};
 use clap::{Arg, App, ArgMatches};
 use std::process;
 use std::io::{self, Write};
+use std::collections::VecDeque;
 
+#[derive(PartialEq, Debug)]
 enum VersionCmd {
     IncMajor,
     IncMinor,
-    IncPatch,
+    IncPatchMerge,
+    IncPatchCommit,
+    IncPatchManual,
     SetVersion(String),
     SetPrereleaseLabel(String),
     ClearPrereleaseLabel,
@@ -31,6 +35,12 @@ fn main() {
              .long("count-patch")
              .value_name("COUNT_METHOD")
              .help("Choose the counting method from merge (default), commit, or manual.")
+             .takes_value(true))
+        .arg(Arg::with_name("path")
+             .short("p")
+             .long("path")
+             .value_name("REPO_PATH")
+             .help("Path to a dir that contains a .git or is a descendant of such a directory.")
              .takes_value(true))
         .subcommand(App::new("major")
                     .about("Increments the major version"))
@@ -75,6 +85,7 @@ fn main() {
 }
 
 fn app(matches: ArgMatches) -> Result<(), i32> {
+    // Select the count method, or default to merge counting
     let count_method = match matches.value_of("count-patch") {
         Some("merge") => CountMethod::Merge,
         Some("commit") => CountMethod::Commit,
@@ -86,10 +97,13 @@ fn app(matches: ArgMatches) -> Result<(), i32> {
         None => CountMethod::Merge
     };
 
-    let repo = match Repository::discover(".") {
+    // If a path is specified, use it, otherwise default to current dir
+    let repo_path = matches.value_of("path").unwrap_or(".");
+
+    let repo = match Repository::discover(repo_path) {
         Ok(repo) => repo,
         Err(_) => {
-            eprintln!("Could not find a git repository in the current directory");
+            eprintln!("Could not find a git repository in {}", repo_path);
             return Err(1);
         },
     };
@@ -203,47 +217,42 @@ fn init(repo: &Repository, remote: &str) {
     repo.remote_add_push(&remote, &"refs/notes/*").expect("argh");
 }
 
+// TODO: needs a full rewrite
 fn get_version(repo: &Repository, count_method: &CountMethod) -> Version {
-    let head = match repo.head() {
+    match repo.head() {
         Ok(head) => head,
         Err(_) => {
             eprintln!("HEAD has no commits - make sure there is at least 1 commit");
             process::exit(1);
         }
     };
-    let name = head.name().unwrap();
-    let notes_ref = repo.note_default_ref().unwrap();
 
-    let mut cmd_stack = Vec::<VersionCmd>::new();
-    let mut top_commit = Some(
-        head.peel_to_commit()
-            .expect(&format!("Couldn't find a commit on ref {}", name)[..]),
-    );
+    let notes_ref = repo.note_default_ref().unwrap();
+    let mut cmds = VecDeque::<VersionCmd>::new();
+    let mut revwalk = repo.revwalk().unwrap();
+    revwalk.push_head().unwrap();
+    revwalk.set_sorting(git2::Sort::TOPOLOGICAL).unwrap();
 
     // Traverse over every commit and note any place where we need to revise the version
-    while let Some(commit) = top_commit {
+    for commit in revwalk {
+        let commit = commit.unwrap();
+        let commit = repo.find_commit(commit).unwrap();
         let num_parents = commit.parents().count();
 
-        if *count_method == CountMethod::Commit && num_parents == 1 {
-            cmd_stack.push(VersionCmd::IncPatch);
-        }
-
-        if *count_method == CountMethod::Merge && num_parents > 1 {
-            cmd_stack.push(VersionCmd::IncPatch);
-        } else {
-            if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
-                if let Some(message) = note.message() {
-                    if let Some(command) = match_message_to_cmd(&count_method, &message) {
-                        cmd_stack.push(command);
-                    }
+        if let Ok(note) = repo.find_note(Some(&notes_ref), commit.id()) {
+            if let Some(message) = note.message() {
+                if let Some(command) = match_message_to_cmd(&message) {
+                    cmds.push_back(command);
                 }
             }
+        } else if num_parents == 1 {
+            cmds.push_back(VersionCmd::IncPatchCommit);
+        } else if num_parents > 1 {
+            cmds.push_back(VersionCmd::IncPatchMerge);
         }
-
-        top_commit = commit.parents().next();
     }
 
-    calculate_version(&mut cmd_stack)
+    calculate_version(&mut cmds, &count_method)
 }
 
 lazy_static! {
@@ -255,7 +264,7 @@ lazy_static! {
         Regex::new(r"autover-set-prerelease-label ([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)").unwrap();
 }
 
-fn match_message_to_cmd(count_method: &CountMethod, message: &str) -> Option<VersionCmd> {
+fn match_message_to_cmd(message: &str) -> Option<VersionCmd> {
     if message.contains("autover-inc-major") {
         return Some(VersionCmd::IncMajor);
     } else if message.contains("autover-inc-minor") {
@@ -269,20 +278,43 @@ fn match_message_to_cmd(count_method: &CountMethod, message: &str) -> Option<Ver
         )));
     } else if message.contains("autover-clear-prerelease-label") {
         return Some(VersionCmd::ClearPrereleaseLabel);
-    } else if message.contains("autover-inc-patch") && *count_method == CountMethod::Manual {
-        return Some(VersionCmd::IncPatch)
+    } else if message.contains("autover-inc-patch") {
+        return Some(VersionCmd::IncPatchManual)
     }
 
     None
 }
 
-fn calculate_version(cmd_stack: &mut Vec<VersionCmd>) -> Version {
+fn calculate_version(cmd_stack: &mut VecDeque<VersionCmd>, count_method: &CountMethod) -> Version {
     let mut version = Version::new(0, 0, 0);
-    while let Some(cmd) = cmd_stack.pop() {
+    let mut skip_next_patch_merge = false;
+    while let Some(cmd) = cmd_stack.pop_back() {
         match cmd {
-            VersionCmd::IncMajor => version.increment_major(),
-            VersionCmd::IncMinor => version.increment_minor(),
-            VersionCmd::IncPatch => version.increment_patch(),
+            VersionCmd::IncMajor => {
+                skip_next_patch_merge = true;
+                version.increment_major();
+            },
+            VersionCmd::IncMinor => {
+                skip_next_patch_merge = true;
+                version.increment_minor()
+            },
+            VersionCmd::IncPatchMerge => {
+                if skip_next_patch_merge {
+                    skip_next_patch_merge = false;
+                } else if count_method == &CountMethod::Merge {
+                    version.increment_patch()
+                }
+            },
+            VersionCmd::IncPatchCommit => {
+                if count_method == &CountMethod::Commit {
+                    version.increment_patch()
+                }
+            },
+            VersionCmd::IncPatchManual => {
+                if count_method == &CountMethod::Manual || count_method == &CountMethod::Commit {
+                    version.increment_patch()
+                }
+            },
             VersionCmd::SetPrereleaseLabel(label) => {
                 version.pre = Vec::from([Identifier::AlphaNumeric(label)])
             }
@@ -294,4 +326,193 @@ fn calculate_version(cmd_stack: &mut Vec<VersionCmd>) -> Version {
     }
 
     version
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use semver::Version;
+    use tempfile::{tempdir, TempDir};
+    use std::process::Command;
+    use std::path::Path;
+
+    fn expect_version_for_repo(expected_version: &str, repo_path: &str, count_method: &CountMethod) {
+        let repo = Repository::discover(repo_path).unwrap();
+        assert_eq!(Version::parse(expected_version).unwrap(),
+                   get_version(&repo, &count_method));
+    }
+
+    fn setup_repo() -> (TempDir, Repository) {
+        // Create a repo and give it an initial commit
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(&dir).unwrap();
+        let path = &dir.path();
+
+        Command::new("git")
+            .current_dir(path)
+            .args(&["commit", "--allow-empty", "-m", "initial commit"])
+            .output()
+            .expect("Git command failed");
+
+        return (dir, repo);
+    }
+
+    fn write_empty_commit(path: &Path, message: &str) {
+        Command::new("git")
+            .current_dir(path)
+            .args(&["commit", "--allow-empty", "-m", message])
+            .output()
+            .expect("Git command failed");
+    }
+
+    fn new_branch(path: &Path, branch: &str) {
+        Command::new("git")
+            .current_dir(path)
+            .args(&["checkout", "-b", branch])
+            .output()
+            .expect("Git command failed");
+    }
+
+    fn use_branch(path: &Path, branch: &str) {
+        Command::new("git")
+            .current_dir(path)
+            .args(&["checkout", branch])
+            .output()
+            .expect("Git command failed");
+    }
+
+    fn merge_branch(path: &Path, branch: &str) {
+        Command::new("git")
+            .current_dir(path)
+            .args(&["merge", "--no-ff", branch])
+            .output()
+            .expect("Git command failed");
+    }
+
+    fn add_note(path: &Path, note: &str) {
+        Command::new("git")
+            .current_dir(path)
+            .args(&["notes", "add", "-m", note])
+            .output()
+            .expect("Git command failed");
+    }
+
+    // Functions to set up test envs
+    fn single_commit(_: &Path) {}
+
+    fn two_commits(path: &Path) {
+        write_empty_commit(path, "second commit");
+    }
+
+    fn merge_commit(path: &Path) {
+        new_branch(path, "other_branch");
+        write_empty_commit(path, "commit on other_branch");
+        use_branch(path, "master");
+        merge_branch(path, "other_branch");
+    }
+
+    fn updated_from_master(path: &Path) {
+        new_branch(path, "other_branch");
+        write_empty_commit(path, "a");
+        use_branch(path, "master");
+        write_empty_commit(path, "b");
+        use_branch(path, "other_branch");
+        merge_branch(path, "master");
+        write_empty_commit(path, "c");
+        use_branch(path, "master");
+        merge_branch(path, "other_branch");
+    }
+
+    fn minor_update(path: &Path) {
+        new_branch(path, "feature-branch-1");
+        write_empty_commit(path, "a");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-1");
+        new_branch(path, "feature-branch-2-minor");
+        write_empty_commit(path, "minor increment");
+        add_note(path, "autover-inc-minor");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-2-minor");
+    }
+
+    fn major_update(path: &Path) {
+        new_branch(path, "feature-branch-1");
+        write_empty_commit(path, "a");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-1");
+        new_branch(path, "feature-branch-2-minor");
+        write_empty_commit(path, "minor increment");
+        add_note(path, "autover-inc-minor");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-2-minor");
+        new_branch(path, "feature-branch-3-major");
+        write_empty_commit(path, "major increment");
+        add_note(path, "autover-inc-major");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-3-major");
+    }
+
+    fn manual_patch_after_major_update(path: &Path) {
+        new_branch(path, "feature-branch-1");
+        write_empty_commit(path, "a");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-1");
+        new_branch(path, "feature-branch-2-minor");
+        write_empty_commit(path, "minor increment");
+        add_note(path, "autover-inc-minor");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-2-minor");
+        new_branch(path, "feature-branch-3-major");
+        write_empty_commit(path, "major increment");
+        add_note(path, "autover-inc-major");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-3-major");
+        new_branch(path, "feature-branch-4-manual-patch");
+        write_empty_commit(path, "manual patch");
+        add_note(path, "autover-inc-patch");
+        use_branch(path, "master");
+        merge_branch(path, "feature-branch-4-manual-patch");
+    }
+
+    macro_rules! repo_tests {
+        ($($name:ident: $setup_fn:ident, $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let (dir, repo) = setup_repo();
+                let repo_path = repo.path().to_str().unwrap();
+                let (version, count_method) = $value;
+                $setup_fn(&dir.path());
+                expect_version_for_repo(version,
+                                        &repo_path,
+                                        &count_method);
+                dir.close().unwrap();
+            }
+        )*
+        }
+    }
+
+    repo_tests! {
+        single_commit_merge: single_commit, ("0.0.0", CountMethod::Merge),
+        single_commit_commit: single_commit, ("0.0.0", CountMethod::Commit),
+        single_commit_manual: single_commit, ("0.0.0", CountMethod::Manual),
+        two_commits_merge: two_commits, ("0.0.0", CountMethod::Merge),
+        two_commits_commit: two_commits, ("0.0.1", CountMethod::Commit),
+        two_commits_manual: two_commits, ("0.0.0", CountMethod::Manual),
+        merge_commit_merge: merge_commit, ("0.0.1", CountMethod::Merge),
+        merge_commit_commit: merge_commit, ("0.0.1", CountMethod::Commit),
+        merge_commit_manual: merge_commit, ("0.0.0", CountMethod::Manual),
+        updated_from_master_merge: updated_from_master, ("0.0.2", CountMethod::Merge),
+        updated_from_master_commit: updated_from_master, ("0.0.3", CountMethod::Commit),
+        updated_from_master_manual: updated_from_master, ("0.0.0", CountMethod::Manual),
+        minor_update_merge: minor_update, ("0.1.0", CountMethod::Merge),
+        minor_update_commit: minor_update, ("0.1.0", CountMethod::Commit),
+        minor_update_manual: minor_update, ("0.1.0", CountMethod::Manual),
+        major_update_merge: major_update, ("1.0.0", CountMethod::Merge),
+        major_update_commit: major_update, ("1.0.0", CountMethod::Commit),
+        major_update_manual: major_update, ("1.0.0", CountMethod::Manual),
+        manual_patch_after_major_update_merge: manual_patch_after_major_update, ("1.0.1", CountMethod::Merge),
+        manual_patch_after_major_update_commit: manual_patch_after_major_update, ("1.0.1", CountMethod::Commit),
+        manual_patch_after_major_update_manual: manual_patch_after_major_update, ("1.0.1", CountMethod::Manual),
+    }
 }

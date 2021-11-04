@@ -1,5 +1,7 @@
 # autover
 
+[![current version on crates.io](https://shields.io/crates/v/autover)](https://crates.io/crates/autover)
+
 Automatic semantic versioning for your git project.
 
 ## Installation
@@ -11,6 +13,8 @@ Automatic semantic versioning for your git project.
 ## How does it work?
 `autover` is an app that **calculates** the version of your project using its git history, specifically by putting some data in the project's `git notes`.
 
+It starts at `0.0.0` and counts up -- the initial commit is `0.0.0`. If you want a different starting point, use `autover set` on the initial commit.
+
 Since it uses git notes, you do need to push the notes refs. `autover init` sets your git config such that it will push 
 
 ## Usage
@@ -20,7 +24,6 @@ You can only make one change to the version per commit. To, for example, update 
 This may be changed in future, but has been omitted from this version for simplicity.
 
 ### Getting the current version
-
 Calling autover with no args will return the current version
 ``` sh
 $ autover
@@ -76,8 +79,11 @@ There's a few different ways to do this, two automatic and one manual.
 ##### Increment patch on merge commit (default)
 By default, `autover` will increment the patch number when it sees a merge commit.
 
+###### Caveat: naive merge commit counting
+This means a merge commit from any branch -- once the merge commit is in `master`, autover cannot tell if it was a merge to master or a merge than happenned between two other branches.
+
 ##### Increment patch on non-merge commits
-Invoking `autover -c commit` will tell `autover` to count regular commits as patch increments.
+Invoking `autover -c commit` will tell `autover` to count regular commits (commits with a single parent) as patch increments.
 
 ##### Increment patches manually
 
